@@ -1,0 +1,7 @@
+flask>=3.0
+pandas
+joblib
+# The scaler was pickled with scikit-learn 1.6.1 - keep the same version
+scikit-learn==1.6.1
+# Use the same xgboost version you trained with (check: pip show xgboost)
+xgboost

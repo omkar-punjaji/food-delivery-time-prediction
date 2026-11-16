@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delivery time predictor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#13233f; --muted:#5b6780; --paper:#f4f6f8; --card:#ffffff; --line:#d9dfe7;
+  --go:#1f8a5b; --warn:#d6453d; --hot:#f2a413; --focus:#2f6fe4;
+  --display:"Bricolage Grotesque","Segoe UI",system-ui,sans-serif;
+  --body:"DM Sans","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{--ink:#e9eef7; --muted:#9aa7bf; --paper:#0e1626; --card:#16213a; --line:#2a3858; --focus:#7aa5ff}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.5 var(--body)}
+header{max-width:1100px;margin:0 auto;padding:40px 24px 8px}
+h1{font:700 clamp(30px,5vw,48px)/1.05 var(--display);margin:0 0 10px;letter-spacing:-.02em}
+header p{margin:0;color:var(--muted);max-width:56ch}
+main{max-width:1100px;margin:0 auto;padding:24px;display:grid;grid-template-columns:1fr 340px;gap:28px;align-items:start}
+@media (max-width:860px){main{grid-template-columns:1fr}}
+form{display:grid;gap:18px}
+fieldset{border:1px solid var(--line);background:var(--card);border-radius:10px;margin:0;padding:18px 20px 20px;
+  display:grid;grid-template-columns:repeat(2,1fr);gap:14px 16px}
+@media (max-width:520px){fieldset{grid-template-columns:1fr}}
+legend{font:600 17px var(--display);padding:0 8px;margin-left:-8px}
+label{display:grid;gap:5px;font-size:14px;font-weight:500}
+.full{grid-column:1/-1}
+small{color:var(--muted);font-weight:400}
+input,select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);
+  border-radius:6px;padding:9px 10px;width:100%}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid var(--focus);outline-offset:1px}
+.seg{display:flex;gap:6px;grid-column:1/-1}
+.seg label{display:block;flex:1}
+.seg input{position:absolute;opacity:0}
+.seg span{display:block;text-align:center;padding:8px;border:1px solid var(--line);border-radius:6px;cursor:pointer;background:var(--paper)}
+.seg input:checked+span{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.seg input:focus-visible+span{outline:3px solid var(--focus)}
+.hidden{display:none!important}
+.coords:not(.hidden){display:contents}
+button{font:600 16px var(--body);background:var(--ink);color:var(--paper);border:0;border-radius:8px;
+  padding:14px 20px;cursor:pointer}
+button:disabled{opacity:.6;cursor:wait}
+
+/* result: a dispatch ticket */
+aside{position:sticky;top:20px}
+.ticket{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.ticket .top{padding:22px 22px 18px}
+.ticket .label{color:var(--muted);font-size:14px}
+.minutes{font:700 84px/1 var(--display);letter-spacing:-.04em;margin:6px 0 2px;min-height:84px}
+.minutes sub{font:500 22px var(--body);letter-spacing:0;margin-left:6px;color:var(--muted);vertical-align:baseline}
+.range{font-size:15px;color:var(--muted)}
+.tear{border-top:2px dashed var(--line);position:relative}
+.tear::before,.tear::after{content:"";position:absolute;top:-11px;width:20px;height:20px;border-radius:50%;background:var(--paper);border:1px solid var(--line)}
+.tear::before{left:-11px}.tear::after{right:-11px}
+.ticket .bottom{padding:16px 22px 20px;display:grid;gap:8px;font-size:14px}
+.ticket .bottom div{display:flex;justify-content:space-between}
+.speed{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:14px}
+.speed i{display:block;height:100%;width:0;background:var(--go);transition:width .5s,background .3s}
+.err{color:var(--warn);font-weight:500;margin-top:10px}
+.note{font-size:13px;color:var(--muted);margin-top:14px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>How long will this order take?</h1>
+  <p>Enter the order details and get a predicted delivery time in minutes, from an XGBoost model trained on past food deliveries.</p>
+</header>
+
+<main>
+<form id="f" autocomplete="off">
+  <fieldset>
+    <legend>Trip</legend>
+    <div class="seg" role="radiogroup" aria-label="How to give the distance">
+      <label><input type="radio" name="distance_mode" value="km" checked><span>I know the distance</span></label>
+      <label><input type="radio" name="distance_mode" value="coords"><span>Use coordinates</span></label>
+    </div>
+    <label id="kmBox" class="full">Distance <small>km, restaurant to customer</small>
+      <input type="number" name="distance_km" step="0.01" min="0" max="99.9" value="5">
+    </label>
+    <div id="coordBox" class="hidden coords">
+      <label>Restaurant latitude <input type="number" name="rest_lat" step="any" value="22.745049"></label>
+      <label>Restaurant longitude <input type="number" name="rest_lon" step="any" value="75.892471"></label>
+      <label>Customer latitude <input type="number" name="drop_lat" step="any" value="22.765049"></label>
+      <label>Customer longitude <input type="number" name="drop_lon" step="any" value="75.912471"></label>
+    </div>
+    <label>Order time <input type="time" name="order_time" value="19:30" required></label>
+    <label>Deliveries on the same trip <small>0 to 3</small>
+      <select name="multiple_deliveries"><option>0</option><option>1</option><option>2</option><option>3</option></select>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Rider and vehicle</legend>
+    <label>Rider age <input type="number" name="Delivery_person_Age" min="15" max="70" value="29"></label>
+    <label>Rider rating <small>1 to 5</small> <input type="number" name="Delivery_person_Ratings" min="1" max="5" step="0.1" value="4.7"></label>
+    <label>Vehicle
+      <select name="Type_of_vehicle">
+        {% for v in choices.Type_of_vehicle %}<option value="{{v}}" {{'selected' if v=='motorcycle'}}>{{v.replace('_',' ')|capitalize}}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Vehicle condition <small>0 = worst, 3 = best</small>
+      <select name="Vehicle_condition"><option>0</option><option selected>1</option><option>2</option><option>3</option></select>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Conditions</legend>
+    <label>Traffic
+      <select name="Road_traffic_density">
+        {% for t in traffic %}<option {{'selected' if t=='Medium'}}>{{t}}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Weather
+      <select name="Weatherconditions">
+        {% for w in choices.Weatherconditions %}<option {{'selected' if w=='Sunny'}}>{{w}}</option>{% endfor %}
+      </select>
+    </label>
+    <label>City type
+      <select name="City">
+        {% for c in choices.City %}<option value="{{c}}">{{'Metropolitan' if c=='Metropolitian' else c}}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Festival day
+      <select name="Festival"><option>No</option><option>Yes</option></select>
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Order</legend>
+    <label class="full">Order type
+      <select name="Type_of_order">
+        {% for o in choices.Type_of_order %}<option {{'selected' if o=='Meal'}}>{{o}}</option>{% endfor %}
+      </select>
+    </label>
+  </fieldset>
+
+  <button id="go" type="submit">Predict delivery time</button>
+</form>
+
+<aside aria-live="polite">
+  <div class="ticket">
+    <div class="top">
+      <div class="label">Predicted delivery time</div>
+      <div class="minutes" id="min">&ndash;<sub>min</sub></div>
+      <div class="range" id="range">Fill in the form and press predict.</div>
+      <div class="speed"><i id="bar"></i></div>
+      <div class="err" id="err" role="alert"></div>
+    </div>
+    <div class="tear"></div>
+    <div class="bottom">
+      <div><span>Distance used</span><b id="dist">&ndash;</b></div>
+      <div><span>Typical model error</span><b>about 4 min</b></div>
+    </div>
+  </div>
+  <p class="note">An estimate based on historical data. Real delivery times also depend on things the model cannot see.</p>
+</aside>
+</main>
+
+<script>
+const f = document.getElementById('f');
+const $ = id => document.getElementById(id);
+
+// show distance field or coordinate fields
+f.querySelectorAll('[name=distance_mode]').forEach(r => r.addEventListener('change', () => {
+  const coords = f.distance_mode.value === 'coords';
+  $('kmBox').classList.toggle('hidden', coords);
+  $('coordBox').classList.toggle('hidden', !coords);
+}));
+
+f.addEventListener('submit', async e => {
+  e.preventDefault();
+  $('err').textContent = '';
+  $('go').disabled = true;
+  try {
+    const res = await fetch('/predict', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.fromEntries(new FormData(f)))
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || 'Prediction failed.');
+    $('min').innerHTML = Math.round(d.minutes) + '<sub>min</sub>';
+    $('range').textContent = 'Likely between ' + d.low + ' and ' + d.high + ' minutes';
+    $('dist').textContent = d.distance_km + ' km';
+    const pct = Math.min(d.minutes / 60, 1) * 100;      // bar: 0 to 60 min
+    $('bar').style.width = pct + '%';
+    $('bar').style.background = d.minutes < 25 ? 'var(--go)' : d.minutes < 40 ? 'var(--hot)' : 'var(--warn)';
+  } catch (err) {
+    $('err').textContent = err.message;
+  } finally {
+    $('go').disabled = false;
+  }
+});
+</script>
+</body>
+</html>
